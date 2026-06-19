@@ -1,9 +1,38 @@
 {
   "expo": {
+    "name": "Jarvis",
+    "slug": "jarvis-mobile",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#06060b"
+    },
     "extra": {
       "eas": {
         "projectId": "cd754d02-11db-41db-8580-fa763c271b87"
       }
-    }
+    },
+    "android": {
+      "package": "com.porokka.jarvismobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#06060b"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.porokka.jarvismobile"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Jarvis to use the camera for visual context."
+        }
+      ]
+    ]
   }
 }

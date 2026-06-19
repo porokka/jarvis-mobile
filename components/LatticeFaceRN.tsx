@@ -78,9 +78,10 @@ export function LatticeFaceRN({
     ).start();
   }, []);
 
+  const canvasH = Math.round(size * 0.92);
   const cx = size / 2;
-  const cy = size / 2 - size * 0.04;
-  const scale = size * 0.32;
+  const cy = canvasH * 0.64;
+  const scale = size * 0.445;
 
   // Compute projected vertices with speaking morph
   const verts = FACE_VERTICES.map(([bx, by, bz], i) => {
@@ -96,7 +97,7 @@ export function LatticeFaceRN({
   const accentColor = thinking ? "#f0c040" : "#40a0f0";
 
   return (
-    <Svg width={size} height={size}>
+    <Svg width={size} height={canvasH}>
       {/* Edges */}
       {FACE_EDGES.map(([a, b], i) => {
         const [ax, ay] = verts[a];

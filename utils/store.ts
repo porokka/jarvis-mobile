@@ -29,6 +29,8 @@ interface JarvisStore {
 
   // Settings
   muted: boolean;
+  micMuted: boolean;
+  cameraMuted: boolean;
   localRoutingEnabled: boolean;
 
   // Actions
@@ -42,6 +44,8 @@ interface JarvisStore {
   setLocalModelLoaded: (v: boolean) => void;
   setLocalModelProgress: (v: number) => void;
   setMuted: (v: boolean) => void;
+  setMicMuted: (v: boolean) => void;
+  setCameraMuted: (v: boolean) => void;
   setLocalRoutingEnabled: (v: boolean) => void;
 }
 
@@ -56,6 +60,8 @@ export const useJarvisStore = create<JarvisStore>((set) => ({
   localModelLoaded: false,
   localModelProgress: 0,
   muted: false,
+  micMuted: false,
+  cameraMuted: false,
   localRoutingEnabled: true,
 
   setState: (state) => set({ state }),
@@ -79,5 +85,7 @@ export const useJarvisStore = create<JarvisStore>((set) => ({
   setLocalModelLoaded: (localModelLoaded) => set({ localModelLoaded }),
   setLocalModelProgress: (localModelProgress) => set({ localModelProgress }),
   setMuted: (muted) => set({ muted }),
+  setMicMuted: (micMuted) => set({ micMuted }),
+  setCameraMuted: (cameraMuted) => set({ cameraMuted }),
   setLocalRoutingEnabled: (localRoutingEnabled) => set({ localRoutingEnabled }),
 }));

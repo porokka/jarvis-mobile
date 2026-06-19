@@ -1,0 +1,33 @@
+diff --git a/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle b/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
+index 1234567..abcdefg 100644
+--- a/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
++++ b/node_modules/expo-modules-core/android/ExpoModulesCorePlugin.gradle
+@@ -88,11 +88,12 @@ class ExpoModulesCorePlugin implements Plugin<Project> {
+     }
+
+     if (options.publishLibrary) {
+-      project.afterEvaluate {
+-        project.publishing {
+-          publications {
+-            release(MavenPublication) {
+-              from project.components.release
+-            }
+-          }
+-          repositories {
+-            maven {
+-              url = mavenLocal().url
++      project.components.matching { it.name == "release" }.all { releaseComponent ->
++        project.publishing {
++          publications {
++            release(MavenPublication) {
++              from releaseComponent
+             }
+           }
++          repositories {
++            maven {
++              url = mavenLocal().url
++            }
++          }
+         }
+       }
+     }

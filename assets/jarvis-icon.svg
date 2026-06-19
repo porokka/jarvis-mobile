@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="eyeglow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <radialGradient id="bg" cx="50%" cy="47%" r="55%">
+      <stop offset="0%" stop-color="#0b1828"/>
+      <stop offset="70%" stop-color="#07080f"/>
+      <stop offset="100%" stop-color="#06060b"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="160" fill="#06060b"/>
+  <rect width="1024" height="1024" rx="160" fill="url(#bg)"/>
+
+  <!-- Eye socket halos (subtle) -->
+  <ellipse cx="390" cy="410" rx="72" ry="52" fill="#1a3a5a" opacity="0.35"/>
+  <ellipse cx="634" cy="410" rx="72" ry="52" fill="#1a3a5a" opacity="0.35"/>
+
+  <!-- Wireframe edges -->
+  <g stroke="#40a0f0" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.58" filter="url(#glow)">
+    <!-- skull crown -->
+    <line x1="512" y1="121.8" x2="368.1" y2="166.5"/>
+    <line x1="512" y1="121.8" x2="655.9" y2="166.5"/>
+    <line x1="368.1" y1="166.5" x2="287.5" y2="251.7"/>
+    <line x1="655.9" y1="166.5" x2="736.5" y2="251.7"/>
+    <line x1="368.1" y1="166.5" x2="391.2" y2="236.9"/>
+    <line x1="655.9" y1="166.5" x2="632.8" y2="236.9"/>
+    <line x1="391.2" y1="236.9" x2="512" y2="219.9"/>
+    <line x1="632.8" y1="236.9" x2="512" y2="219.9"/>
+    <line x1="512" y1="121.8" x2="512" y2="219.9"/>
+    <line x1="287.5" y1="251.7" x2="391.2" y2="236.9"/>
+    <line x1="736.5" y1="251.7" x2="632.8" y2="236.9"/>
+    <!-- forehead -->
+    <line x1="391.2" y1="236.9" x2="412.9" y2="343"/>
+    <line x1="632.8" y1="236.9" x2="611.1" y2="343"/>
+    <line x1="512" y1="219.9" x2="512" y2="351.6"/>
+    <line x1="287.5" y1="251.7" x2="312" y2="360"/>
+    <line x1="312" y1="360" x2="361.1" y2="350.2"/>
+    <line x1="361.1" y1="350.2" x2="412.9" y2="343"/>
+    <line x1="412.9" y1="343" x2="512" y2="351.6"/>
+    <line x1="512" y1="351.6" x2="611.1" y2="343"/>
+    <line x1="611.1" y1="343" x2="712" y2="360"/>
+    <line x1="736.5" y1="251.7" x2="712" y2="360"/>
+    <!-- left eye socket -->
+    <line x1="312" y1="360" x2="319.2" y2="419"/>
+    <line x1="361.1" y1="350.2" x2="360.5" y2="400.9"/>
+    <line x1="412.9" y1="343" x2="432.5" y2="413.6"/>
+    <line x1="360.5" y1="400.9" x2="432.5" y2="413.6"/>
+    <line x1="360.5" y1="400.9" x2="319.2" y2="419"/>
+    <line x1="432.5" y1="413.6" x2="372.2" y2="440.4"/>
+    <line x1="319.2" y1="419" x2="372.2" y2="440.4"/>
+    <!-- right eye socket -->
+    <line x1="712" y1="360" x2="704.8" y2="419"/>
+    <line x1="611.1" y1="343" x2="591.5" y2="413.6"/>
+    <line x1="663.5" y1="400.9" x2="591.5" y2="413.6"/>
+    <line x1="663.5" y1="400.9" x2="704.8" y2="419"/>
+    <line x1="591.5" y1="413.6" x2="651.8" y2="440.4"/>
+    <line x1="704.8" y1="419" x2="651.8" y2="440.4"/>
+    <!-- nose bridge -->
+    <line x1="512" y1="351.6" x2="512" y2="424.2"/>
+    <line x1="432.5" y1="413.6" x2="512" y2="424.2"/>
+    <line x1="591.5" y1="413.6" x2="512" y2="424.2"/>
+    <!-- nose to mouth -->
+    <line x1="512" y1="424.2" x2="512" y2="484.8"/>
+    <line x1="512" y1="484.8" x2="512" y2="543.7"/>
+    <line x1="512" y1="543.7" x2="465" y2="562.1"/>
+    <line x1="512" y1="543.7" x2="559" y2="562.1"/>
+    <line x1="465" y1="562.1" x2="512" y2="574"/>
+    <line x1="559" y1="562.1" x2="512" y2="574"/>
+    <line x1="465" y1="562.1" x2="559" y2="562.1"/>
+    <!-- cheek sides -->
+    <line x1="319.2" y1="419" x2="278.5" y2="478.8"/>
+    <line x1="278.5" y1="478.8" x2="289.9" y2="579.2"/>
+    <line x1="372.2" y1="440.4" x2="278.5" y2="478.8"/>
+    <line x1="704.8" y1="419" x2="745.5" y2="478.8"/>
+    <line x1="745.5" y1="478.8" x2="734.1" y2="579.2"/>
+    <line x1="651.8" y1="440.4" x2="745.5" y2="478.8"/>
+    <line x1="289.9" y1="579.2" x2="425.3" y2="628.5"/>
+    <line x1="734.1" y1="579.2" x2="598.7" y2="628.5"/>
+    <!-- upper lip -->
+    <line x1="512" y1="574" x2="512" y2="609.1"/>
+    <line x1="425.3" y1="628.5" x2="472.8" y2="613"/>
+    <line x1="472.8" y1="613" x2="512" y2="609.1"/>
+    <line x1="512" y1="609.1" x2="551.2" y2="613"/>
+    <line x1="551.2" y1="613" x2="598.7" y2="628.5"/>
+    <!-- lower lip / mouth -->
+    <line x1="425.3" y1="628.5" x2="472.7" y2="648.2"/>
+    <line x1="472.7" y1="648.2" x2="512" y2="656.1"/>
+    <line x1="512" y1="656.1" x2="551.3" y2="648.2"/>
+    <line x1="551.3" y1="648.2" x2="598.7" y2="628.5"/>
+    <!-- jaw sides -->
+    <line x1="289.9" y1="579.2" x2="287.9" y2="639.6"/>
+    <line x1="734.1" y1="579.2" x2="736.1" y2="639.6"/>
+    <line x1="287.9" y1="639.6" x2="317.1" y2="720.9"/>
+    <line x1="736.1" y1="639.6" x2="706.9" y2="720.9"/>
+    <line x1="317.1" y1="720.9" x2="371.1" y2="788.9"/>
+    <line x1="706.9" y1="720.9" x2="652.9" y2="788.9"/>
+    <line x1="371.1" y1="788.9" x2="452.1" y2="827.7"/>
+    <line x1="652.9" y1="788.9" x2="571.9" y2="827.7"/>
+    <line x1="452.1" y1="827.7" x2="512" y2="851.3"/>
+    <line x1="571.9" y1="827.7" x2="512" y2="851.3"/>
+    <!-- chin -->
+    <line x1="512" y1="851.3" x2="430.3" y2="905"/>
+    <line x1="512" y1="851.3" x2="593.7" y2="905"/>
+    <line x1="452.1" y1="827.7" x2="430.3" y2="905"/>
+    <line x1="571.9" y1="827.7" x2="593.7" y2="905"/>
+  </g>
+
+  <!-- Eye socket bright lines (extra glow on eye edges) -->
+  <g stroke="#40a0f0" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.5" filter="url(#eyeglow)">
+    <line x1="360.5" y1="400.9" x2="432.5" y2="413.6"/>
+    <line x1="360.5" y1="400.9" x2="319.2" y2="419"/>
+    <line x1="432.5" y1="413.6" x2="372.2" y2="440.4"/>
+    <line x1="319.2" y1="419" x2="372.2" y2="440.4"/>
+    <line x1="663.5" y1="400.9" x2="591.5" y2="413.6"/>
+    <line x1="663.5" y1="400.9" x2="704.8" y2="419"/>
+    <line x1="591.5" y1="413.6" x2="651.8" y2="440.4"/>
+    <line x1="704.8" y1="419" x2="651.8" y2="440.4"/>
+  </g>
+
+  <!-- Regular nodes -->
+  <g fill="#40a0f0" opacity="0.82" filter="url(#glow)">
+    <circle cx="512" cy="121.8" r="7"/>
+    <circle cx="368.1" cy="166.5" r="7"/>
+    <circle cx="655.9" cy="166.5" r="7"/>
+    <circle cx="287.5" cy="251.7" r="7"/>
+    <circle cx="736.5" cy="251.7" r="7"/>
+    <circle cx="391.2" cy="236.9" r="7"/>
+    <circle cx="632.8" cy="236.9" r="7"/>
+    <circle cx="512" cy="219.9" r="7"/>
+    <circle cx="312" cy="360" r="7"/>
+    <circle cx="412.9" cy="343" r="7"/>
+    <circle cx="512" cy="351.6" r="7"/>
+    <circle cx="611.1" cy="343" r="7"/>
+    <circle cx="712" cy="360" r="7"/>
+    <circle cx="512" cy="424.2" r="7"/>
+    <circle cx="512" cy="484.8" r="7"/>
+    <circle cx="512" cy="543.7" r="7"/>
+    <circle cx="465" cy="562.1" r="7"/>
+    <circle cx="559" cy="562.1" r="7"/>
+    <circle cx="512" cy="574" r="7"/>
+    <circle cx="278.5" cy="478.8" r="7"/>
+    <circle cx="745.5" cy="478.8" r="7"/>
+    <circle cx="289.9" cy="579.2" r="7"/>
+    <circle cx="734.1" cy="579.2" r="7"/>
+    <circle cx="425.3" cy="628.5" r="7"/>
+    <circle cx="598.7" cy="628.5" r="7"/>
+    <circle cx="472.8" cy="613" r="7"/>
+    <circle cx="512" cy="609.1" r="7"/>
+    <circle cx="551.2" cy="613" r="7"/>
+    <circle cx="472.7" cy="648.2" r="7"/>
+    <circle cx="512" cy="656.1" r="7"/>
+    <circle cx="551.3" cy="648.2" r="7"/>
+    <circle cx="287.9" cy="639.6" r="7"/>
+    <circle cx="736.1" cy="639.6" r="7"/>
+    <circle cx="317.1" cy="720.9" r="7"/>
+    <circle cx="706.9" cy="720.9" r="7"/>
+    <circle cx="371.1" cy="788.9" r="7"/>
+    <circle cx="652.9" cy="788.9" r="7"/>
+    <circle cx="452.1" cy="827.7" r="7"/>
+    <circle cx="571.9" cy="827.7" r="7"/>
+    <circle cx="512" cy="851.3" r="7"/>
+    <circle cx="430.3" cy="905" r="7"/>
+    <circle cx="593.7" cy="905" r="7"/>
+  </g>
+
+  <!-- Eye socket nodes (brighter, larger) -->
+  <g fill="#40a0f0" opacity="0.95" filter="url(#eyeglow)">
+    <circle cx="361.1" cy="350.2" r="9"/>
+    <circle cx="360.5" cy="400.9" r="9"/>
+    <circle cx="432.5" cy="413.6" r="9"/>
+    <circle cx="319.2" cy="419" r="9"/>
+    <circle cx="372.2" cy="440.4" r="9"/>
+    <circle cx="663.5" cy="400.9" r="9"/>
+    <circle cx="591.5" cy="413.6" r="9"/>
+    <circle cx="704.8" cy="419" r="9"/>
+    <circle cx="651.8" cy="440.4" r="9"/>
+  </g>
+</svg>
