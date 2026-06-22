@@ -1,4 +1,5 @@
-import { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect } from "react";
+import { Platform } from "react-native";
 import * as FileSystem from "expo-file-system";
 
 interface TelegramConfig {
@@ -15,6 +16,7 @@ export interface SkillDefinition {
 interface UseTelegramOptions {
   onText: (text: string) => void;
   onVoice: (fileId: string) => void;
+  onTranscript?: (text: string) => void;
   onSkill?: (skill: SkillDefinition) => void;
   enabled: boolean;
 }
@@ -32,48 +34,79 @@ export function useTelegram(
 
   // ── Send text message ────────────────────────────────────────────────────
   const sendText = useCallback(async (text: string) => {
-    if (!config.botToken || !config.chatId) return;
+    if (!config.botToken || !config.chatId) {
+      console.warn("[TG] sendText blocked — token or chatId not set");
+      return;
+    }
     try {
-      await fetch(`${base}/sendMessage`, {
+      const res  = await fetch(`${base}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: config.chatId,
           text,
-          parse_mode: "Markdown",
         }),
       });
+      const data = await res.json();
+      if (!data.ok) {
+        console.warn(`[TG] sendMessage failed: ${data.error_code} ${data.description}`);
+      } else {
+        console.log(`[TG] sent ok (msg_id:${data.result?.message_id})`);
+      }
     } catch (e) {
       console.warn("[TG] sendText failed", e);
     }
   }, [config.botToken, config.chatId]);
 
-  // ── Send voice (WAV base64) ──────────────────────────────────────────────
-  // Telegram requires OGG/OPUS for sendVoice, but sendAudio accepts WAV
-  const sendVoice = useCallback(async (wavBase64: string) => {
+  // ── Request Kokoro TTS from main Jarvis ─────────────────────────────────
+  // Sends JARVIS_MOBILE {"type":"tts","text":"..."} — Jarvis calls Kokoro and
+  // sends WAV audio back; the caller's onVoice callback handles playback.
+  const requestTts = useCallback(async (text: string) => {
+    if (!config.botToken || !config.chatId) return;
+    const packet = JSON.stringify({ type: "tts", text });
+    await sendText(`JARVIS_MOBILE ${packet}`);
+    console.log("[TG] TTS request sent");
+  }, [config.botToken, config.chatId, sendText]);
+
+  // ── Send structured query packet to main Jarvis ─────────────────────────
+  // Format: JARVIS_MOBILE {"type":"query","input":"voice","model":"offline","text":"..."}
+  // Main Jarvis parses this, generates reply + optional TTS audio.
+  const sendQuery = useCallback(async (
+    text: string,
+    input: "voice" | "text" | "image",
+    modelState: "offline" | "online" | "routed"
+  ) => {
+    if (!config.botToken || !config.chatId) return;
+    const packet = JSON.stringify({ type: "query", input, model: modelState, text });
+    await sendText(`JARVIS_MOBILE ${packet}`);
+  }, [config.botToken, config.chatId, sendText]);
+
+  // ── Send voice to main Jarvis via Telegram ──────────────────────────────
+  // Android records M4A/AAC, iOS records CAF — send with correct MIME type
+  // so main Jarvis can download and transcribe with Whisper.
+  // transcribeOnly=true → Jarvis just returns the transcript text (local model will route it)
+  // transcribeOnly=false → Jarvis handles the full reply + sends TTS audio back
+  const sendVoice = useCallback(async (audioBase64: string, transcribeOnly = false) => {
     if (!config.botToken || !config.chatId) return;
     try {
-      // Write to temp file
-      const path = `${FileSystem.cacheDirectory}jarvis_voice_out.wav`;
-      await FileSystem.writeAsStringAsync(path, wavBase64, {
+      const isAndroid = Platform.OS === "android";
+      const ext      = isAndroid ? ".m4a" : ".caf";
+      const mime     = isAndroid ? "audio/mp4" : "audio/x-caf";
+      const path     = `${FileSystem.cacheDirectory}jarvis_voice_out${ext}`;
+
+      await FileSystem.writeAsStringAsync(path, audioBase64, {
         encoding: FileSystem.EncodingType.Base64,
       });
 
-      // Upload as audio file
+      const caption = transcribeOnly ? "JARVIS_VOICE_TRANSCRIBE" : "JARVIS_VOICE_QUERY";
       const formData = new FormData();
       formData.append("chat_id", config.chatId);
-      formData.append("audio", {
-        uri: path,
-        name: "voice.wav",
-        type: "audio/wav",
-      } as any);
+      formData.append("caption", caption);
+      formData.append("audio", { uri: path, name: `voice${ext}`, type: mime } as any);
 
-      await fetch(`${base}/sendAudio`, {
-        method: "POST",
-        body: formData,
-      });
-
+      await fetch(`${base}/sendAudio`, { method: "POST", body: formData });
       await FileSystem.deleteAsync(path, { idempotent: true });
+      console.log(`[TG] voice sent (${caption})`);
     } catch (e) {
       console.warn("[TG] sendVoice failed", e);
     }
@@ -138,14 +171,36 @@ export function useTelegram(
           // JSON file attachment — parse as skill definition
           tryLoadSkillFile(msg.document.file_id);
         } else if (msg.text) {
-          optsRef.current.onText(msg.text);
+          // Parse structured JARVIS_REPLY packets from main Jarvis
+          if (msg.text.startsWith("JARVIS_REPLY ")) {
+            try {
+              const payload = JSON.parse(msg.text.slice(13));
+              if (payload.text) optsRef.current.onText(payload.text);
+            } catch {
+              optsRef.current.onText(msg.text);
+            }
+          } else if (msg.text.startsWith("JARVIS_TRANSCRIPT ")) {
+            try {
+              const payload = JSON.parse(msg.text.slice(18));
+              if (payload.text) optsRef.current.onTranscript?.(payload.text);
+            } catch {
+              optsRef.current.onTranscript?.(msg.text.slice(18));
+            }
+          } else if (!msg.text.startsWith("JARVIS_MOBILE ")) {
+            // Don't echo our own outgoing packets back
+            optsRef.current.onText(msg.text);
+          }
         } else if (msg.voice || msg.audio) {
           const fileId = msg.voice?.file_id || msg.audio?.file_id;
           if (fileId) optsRef.current.onVoice(fileId);
         }
       }
+      return;  // retry scheduled below
     } catch (e) {
       console.warn("[TG] poll failed", e);
+      // Back off on error so we don't spam the console
+      pollRef.current = setTimeout(poll, 5000);
+      return;
     }
 
     // Schedule next poll
@@ -159,7 +214,24 @@ export function useTelegram(
       const path = data?.result?.file_path;
       if (!path) return;
       const json = await (await fetch(`https://api.telegram.org/file/bot${config.botToken}/${path}`)).json();
-      if (json.name && json.prompt && optsRef.current.onSkill) {
+      if (!optsRef.current.onSkill) return;
+
+      // Array of skills (e.g. from /skills export by main Jarvis)
+      if (Array.isArray(json)) {
+        for (const item of json) {
+          if (item?.name && item?.prompt) {
+            optsRef.current.onSkill({
+              name:        item.name,
+              description: item.description ?? item.name,
+              prompt:      item.prompt,
+            });
+          }
+        }
+        return;
+      }
+
+      // Single skill object
+      if (json.name && json.prompt) {
         optsRef.current.onSkill({
           name:        json.name,
           description: json.description ?? json.name,
@@ -181,5 +253,5 @@ export function useTelegram(
     };
   }, [opts.enabled, config.botToken, config.chatId, poll]);
 
-  return { sendText, sendVoice, downloadVoice };
+  return { sendText, sendQuery, sendVoice, downloadVoice, requestTts };
 }

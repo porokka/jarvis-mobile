@@ -1,13 +1,51 @@
 import { useEffect, useRef, useCallback } from "react";
+import { NativeModules, PermissionsAndroid, Platform } from "react-native";
 import { initLlama, LlamaContext, type RNLlamaMessagePart } from "llama.rn";
 import * as FileSystem from "expo-file-system";
 import { useJarvisStore } from "../utils/store";
+
+const { MemoryManager } = NativeModules;
+
+async function requestNotificationPermission() {
+  if (Platform.OS === "android" && Platform.Version >= 33) {
+    await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
+    );
+  }
+}
 
 const HF_BASE = "https://huggingface.co/bartowski/google_gemma-4-E2B-it-GGUF/resolve/main";
 const MODEL_FILENAME  = "google_gemma-4-E2B-it-Q4_K_M.gguf";   // 3.46 GB
 const MMPROJ_FILENAME = "mmproj-google_gemma-4-E2B-it-f16.gguf"; // 986 MB
 const MODEL_URL  = `${HF_BASE}/${MODEL_FILENAME}`;
 const MMPROJ_URL = `${HF_BASE}/${MMPROJ_FILENAME}`;
+
+// Gemma 4 channel token formats observed in the wild:
+//   <|channel>REASONING<channel|>REPLY   ← most common
+//   <|channel>REASONING<channel>REPLY    ← alternate
+//   <|channel|>REASONING<|channel|>REPLY ← symmetric form
+// Strip ALL variants; split at first closing-style delimiter.
+const CHANNEL_ANY  = /<\|?channel\|?>/gi;
+const CHANNEL_OPEN = /^<\|channel\|?>/i;
+
+function parseModelReply(raw: string): { reply: string; log: string } {
+  // Try each possible separator in priority order
+  for (const sep of ["<channel|>", "<channel>", "<|channel|>"]) {
+    const idx = raw.indexOf(sep);
+    if (idx !== -1) {
+      const log   = raw.slice(0, idx).replace(CHANNEL_ANY, "").trim();
+      const reply = raw.slice(idx + sep.length).replace(CHANNEL_ANY, "").trim();
+      return { reply, log };
+    }
+  }
+
+  // Only an opening token (stop fired before separator) — reasoning only, no reply
+  if (CHANNEL_OPEN.test(raw)) {
+    return { reply: "", log: raw.replace(CHANNEL_ANY, "").trim() };
+  }
+
+  return { reply: raw, log: "" };
+}
 
 function buildRouterSystem(skillsPrompt: string, memoryContext: string): string {
   return `You are a routing layer for JARVIS, an AI assistant.
@@ -44,51 +82,100 @@ export function useLocalModel(
   getMemoryContext: () => Promise<string> = async () => ""
 ) {
   const ctxRef = useRef<LlamaContext | null>(null);
-  const { setLocalModelLoaded, setLocalModelProgress, localRoutingEnabled } =
+  const { setLocalModelLoaded, setLocalModelProgress, setLocalModelError, setLocalModelLog, localRoutingEnabled } =
     useJarvisStore();
 
   useEffect(() => {
     if (!localRoutingEnabled) return;
-    loadModel();
+    let active = true;
+    loadModel(active, (ctx) => { if (active) ctxRef.current = ctx; });
     return () => {
+      active = false;
       ctxRef.current?.release();
       ctxRef.current = null;
     };
   }, [localRoutingEnabled]);
 
-  async function loadModel() {
-    const modelPath  = `${FileSystem.documentDirectory}${MODEL_FILENAME}`;
-    const mmprojPath = `${FileSystem.documentDirectory}${MMPROJ_FILENAME}`;
+  async function loadModel(active: boolean, setCtx: (ctx: LlamaContext) => void) {
+    let localCtx: LlamaContext | null = null;
+    try {
+      setLocalModelError(null);
+      await requestNotificationPermission();
+      MemoryManager?.startDownloadService("Downloading JARVIS AI model — keep app in background").catch?.(() => {});
+      const modelPath  = `${FileSystem.documentDirectory}${MODEL_FILENAME}`;
+      const mmprojPath = `${FileSystem.documentDirectory}${MMPROJ_FILENAME}`;
 
-    // Download model (~3.46 GB) — progress 0-70%
-    console.log("[LLM] checking model...");
-    await downloadFile(MODEL_URL, modelPath, (pct) =>
-      setLocalModelProgress(Math.round(pct * 0.7))
-    );
+      console.log("[LLM] checking model...");
+      await downloadFile(MODEL_URL, modelPath, (pct) =>
+        setLocalModelProgress(Math.round(pct * 0.7))
+      );
 
-    // Download mmproj (~986 MB) — progress 70-100%
-    console.log("[LLM] checking mmproj...");
-    await downloadFile(MMPROJ_URL, mmprojPath, (pct) =>
-      setLocalModelProgress(70 + Math.round(pct * 0.3))
-    );
+      console.log("[LLM] checking mmproj...");
+      await downloadFile(MMPROJ_URL, mmprojPath, (pct) =>
+        setLocalModelProgress(70 + Math.round(pct * 0.3))
+      );
 
-    console.log("[LLM] loading model...");
-    ctxRef.current = await initLlama({
-      model: modelPath,
-      use_mlock: true,
-      n_ctx: 4096,
-      n_threads: 4,
-      n_gpu_layers: 0,
-    });
+      // Verify files are complete before handing to llama
+      const modelInfo  = await FileSystem.getInfoAsync(modelPath,  { size: true });
+      const mmprojInfo = await FileSystem.getInfoAsync(mmprojPath, { size: true });
+      const modelSize  = (modelInfo  as any).size ?? 0;
+      const mmprojSize = (mmprojInfo as any).size ?? 0;
+      console.log(`[LLM] model: ${(modelSize  / 1073741824).toFixed(2)} GB`);
+      console.log(`[LLM] mmproj: ${(mmprojSize / 1048576).toFixed(0)} MB`);
 
-    console.log("[LLM] loading mmproj...");
-    await ctxRef.current.initMultimodal({
-      path: mmprojPath,
-      use_gpu: false,
-    });
+      if (modelSize < 2_000_000_000) {
+        await FileSystem.deleteAsync(modelPath, { idempotent: true });
+        throw new Error(`Model too small (${(modelSize / 1073741824).toFixed(2)} GB) — restart to re-download`);
+      }
+      if (mmprojSize < 500_000_000) {
+        await FileSystem.deleteAsync(mmprojPath, { idempotent: true });
+        throw new Error(`mmproj too small (${(mmprojSize / 1048576).toFixed(0)} MB) — restart to re-download`);
+      }
 
-    setLocalModelLoaded(true);
-    console.log("[LLM] model + mmproj ready");
+      console.log("[LLM] initializing llama context...");
+      setLocalModelProgress(95);
+      localCtx = await initLlama({
+        model: modelPath,
+        use_mlock: false,
+        n_ctx: 4096,
+        n_threads: 4,
+        n_gpu_layers: 0,
+      });
+
+      if (!active) { localCtx.release(); return; }
+
+      console.log("[LLM] loading mmproj...");
+      try {
+        const mmCheck = await FileSystem.getInfoAsync(mmprojPath, { size: true });
+        const mmSize  = (mmCheck as any).size ?? 0;
+        console.log(`[LLM] mmproj size at init: ${(mmSize / 1048576).toFixed(0)} MB`);
+        if (mmSize < 900_000_000) {
+          await FileSystem.deleteAsync(mmprojPath, { idempotent: true });
+          console.warn("[LLM] mmproj truncated — deleted, restart to re-download");
+        } else {
+          await localCtx.initMultimodal({ path: mmprojPath, use_gpu: false });
+          const support = await localCtx.getMultimodalSupport();
+          console.log(`[LLM] multimodal: vision=${support.vision} audio=${support.audio}`);
+        }
+      } catch (e) {
+        console.warn("[LLM] mmproj skipped:", e);
+      }
+
+      if (!active) { localCtx.release(); return; }
+
+      setCtx(localCtx);
+      setLocalModelProgress(100);
+      setLocalModelLoaded(true);
+      console.log("[LLM] ready");
+      MemoryManager?.stopDownloadService().catch?.(() => {});
+      MemoryManager?.notifyModelReady().catch?.(() => {});
+    } catch (e: any) {
+      localCtx?.release();
+      const msg = e?.message ?? String(e);
+      console.error("[LLM] init failed:", msg);
+      setLocalModelError(msg);
+      MemoryManager?.stopDownloadService().catch?.(() => {});
+    }
   }
 
   const route = useCallback(
@@ -99,10 +186,10 @@ export function useLocalModel(
       if (!ctxRef.current) return { decision: "remote" };
 
       try {
-        const memCtx  = await getMemoryContext();
-        const system  = buildRouterSystem(getSkillsPrompt(), memCtx);
+        const memCtx  = (await getMemoryContext()).slice(0, 800);
+        const system  = buildRouterSystem(getSkillsPrompt().slice(0, 600), memCtx);
         const prompt  = conversationContext
-          ? `Recent context:\n${conversationContext}\n\nUser: ${text}`
+          ? `Recent context:\n${conversationContext.slice(0, 400)}\n\nUser: ${text}`
           : `User: ${text}`;
 
         const result = await ctxRef.current.completion({
@@ -110,14 +197,15 @@ export function useLocalModel(
             { role: "system", content: system },
             { role: "user",   content: prompt },
           ],
-          n_predict: 256,
+          n_predict: 128,
           temperature: 0.1,
-          stop: ["\n\n", "<end_of_turn>"],
+          stop: ["\n\n", "<end_of_turn>", "<|end|>"],
         });
 
-        const reply = result.text.trim();
+        const { reply, log } = parseModelReply(result.text.trim());
+        if (log) setLocalModelLog(log);
 
-        if (reply.startsWith("ROUTE:") || reply === "ROUTE") {
+        if (!reply || reply.startsWith("ROUTE:") || reply === "ROUTE") {
           return { decision: "remote" };
         }
         if (reply.startsWith("SKILL:")) {
@@ -143,9 +231,13 @@ export function useLocalModel(
       if (!imageUri) return route(text, conversationContext);
 
       try {
-        const isEnabled = await ctxRef.current.isMultimodalEnabled();
-        if (!isEnabled) return route(text, conversationContext);
+        const mmEnabled = await ctxRef.current.isMultimodalEnabled();
+        if (!mmEnabled) return route(text, conversationContext);
+        const support = await ctxRef.current.getMultimodalSupport();
+        if (!support.vision) return route(text, conversationContext);
 
+        const memCtx = await getMemoryContext();
+        const system = buildRouterSystem(getSkillsPrompt(), memCtx);
         const contextPrefix = conversationContext
           ? `Recent context:\n${conversationContext}\n\nUser: `
           : "User: ";
@@ -157,7 +249,7 @@ export function useLocalModel(
 
         const result = await ctxRef.current.completion({
           messages: [
-            { role: "system", content: ROUTER_SYSTEM },
+            { role: "system", content: system },
             { role: "user", content },
           ],
           n_predict: 128,
@@ -175,8 +267,64 @@ export function useLocalModel(
         return route(text, conversationContext);
       }
     },
-    [route]
+    [route, getSkillsPrompt, getMemoryContext]
   );
 
-  return { route, routeWithVision, isLoaded: !!ctxRef.current };
+  const routeWithAudio = useCallback(
+    async (
+      wavBase64: string,
+      conversationContext = ""
+    ): Promise<{ decision: "local" | "remote" | "no_audio_support"; localReply?: string }> => {
+      if (!ctxRef.current) return { decision: "no_audio_support" };
+
+      try {
+        const mmEnabled = await ctxRef.current.isMultimodalEnabled();
+        if (!mmEnabled) return { decision: "no_audio_support" };
+        const support = await ctxRef.current.getMultimodalSupport();
+        if (!support.audio) return { decision: "no_audio_support" };
+
+        const memCtx = (await getMemoryContext()).slice(0, 800);
+        const system = buildRouterSystem(getSkillsPrompt().slice(0, 600), memCtx);
+        const contextPrefix = conversationContext
+          ? `Recent context:\n${conversationContext.slice(0, 400)}\n\nUser (voice): `
+          : "User (voice): ";
+
+        // Write 16kHz mono WAV to temp file for llama.rn
+        const tmpPath = `${FileSystem.cacheDirectory}jarvis_audio_in.wav`;
+        await FileSystem.writeAsStringAsync(tmpPath, wavBase64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        const content: RNLlamaMessagePart[] = [
+          { type: "input_audio", input_audio: { format: "wav", url: tmpPath } },
+          { type: "text", text: contextPrefix + "Transcribe and respond." },
+        ];
+
+        const result = await ctxRef.current.completion({
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content },
+          ],
+          n_predict: 128,
+          temperature: 0.1,
+          stop: ["\n\n", "<end_of_turn>", "<|end|>"],
+        });
+
+        const { reply, log } = parseModelReply(result.text.trim());
+        if (log) setLocalModelLog(log);
+        FileSystem.deleteAsync(tmpPath, { idempotent: true }).catch(() => {});
+
+        if (!reply || reply.startsWith("ROUTE:") || reply === "ROUTE") {
+          return { decision: "remote" };
+        }
+        return { decision: "local", localReply: reply };
+      } catch (e) {
+        console.warn("[LLM] audio routing error", e);
+        return { decision: "no_audio_support" };
+      }
+    },
+    [getSkillsPrompt, getMemoryContext]
+  );
+
+  return { route, routeWithVision, routeWithAudio, isLoaded: !!ctxRef.current };
 }

@@ -6,16 +6,31 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useJarvisStore } from "../utils/store";
 import { COLORS } from "../utils/theme";
 
 const STORAGE_KEY = "jarvis_settings";
 
+type RoutingMode = "brain" | "hybrid" | "remote";
+
+const ROUTING_OPTIONS: { key: RoutingMode; label: string; hint: string }[] = [
+  { key: "brain",  label: "BRAIN",  hint: "On-device Gemma 4 only — no network" },
+  { key: "hybrid", label: "HYBRID", hint: "Local model first, Telegram fallback" },
+  { key: "remote", label: "REMOTE", hint: "Always use main Jarvis via Telegram" },
+];
+
 export default function SettingsScreen() {
   const router = useRouter();
-  const [botToken, setBotToken] = useState("");
-  const [chatId, setChatId]     = useState("");
-  const [jarvisIp, setJarvisIp] = useState("192.168.1.100");
-  const [saved, setSaved]       = useState(false);
+  const {
+    routingMode: storeMode, setRoutingMode: setStoreMode,
+    setBotToken: setStoreBotToken, setChatId: setStoreChatId,
+    ttsMode: storeTtsMode, setTtsMode: setStoreTtsMode,
+  } = useJarvisStore();
+  const [botToken, setBotToken]       = useState("");
+  const [chatId, setChatId]           = useState("");
+  const [routingMode, setRoutingMode] = useState<RoutingMode>(storeMode);
+  const [ttsMode, setTtsMode]         = useState<"local" | "kokoro">(storeTtsMode);
+  const [saved, setSaved]             = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -25,7 +40,8 @@ export default function SettingsScreen() {
           const s = JSON.parse(raw);
           if (s.telegramBotToken) setBotToken(s.telegramBotToken);
           if (s.telegramChatId)   setChatId(s.telegramChatId);
-          if (s.jarvisIp)         setJarvisIp(s.jarvisIp);
+          if (s.routingMode)      setRoutingMode(s.routingMode);
+          if (s.ttsMode)          setTtsMode(s.ttsMode);
         }
       } catch {}
     })();
@@ -36,8 +52,13 @@ export default function SettingsScreen() {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({
         telegramBotToken: botToken.trim(),
         telegramChatId:   chatId.trim(),
-        jarvisIp:         jarvisIp.trim(),
+        routingMode,
+        ttsMode,
       }));
+      setStoreMode(routingMode);
+      setStoreBotToken(botToken.trim());
+      setStoreChatId(chatId.trim());
+      setStoreTtsMode(ttsMode);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch {}
@@ -61,6 +82,53 @@ export default function SettingsScreen() {
 
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
 
+          <Section label="ROUTING MODE">
+            <View style={{ paddingVertical: 10 }}>
+              <Text style={modeStyles.hint}>
+                {ROUTING_OPTIONS.find(o => o.key === routingMode)?.hint ?? ""}
+              </Text>
+              <View style={modeStyles.row}>
+                {ROUTING_OPTIONS.map(opt => (
+                  <TouchableOpacity
+                    key={opt.key}
+                    style={[modeStyles.btn, routingMode === opt.key && modeStyles.btnActive]}
+                    onPress={() => setRoutingMode(opt.key)}
+                  >
+                    <Text style={[modeStyles.label, routingMode === opt.key && modeStyles.labelActive]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </Section>
+
+          <Section label="TTS VOICE">
+            <View style={{ paddingVertical: 10 }}>
+              <Text style={modeStyles.hint}>
+                {ttsMode === "local"
+                  ? "Android native TTS — instant, no network"
+                  : "Kokoro WAV via main Jarvis — higher quality, requires Telegram"}
+              </Text>
+              <View style={modeStyles.row}>
+                {([
+                  { key: "local"  as const, label: "LOCAL"  },
+                  { key: "kokoro" as const, label: "KOKORO" },
+                ]).map(opt => (
+                  <TouchableOpacity
+                    key={opt.key}
+                    style={[modeStyles.btn, ttsMode === opt.key && modeStyles.btnActive]}
+                    onPress={() => setTtsMode(opt.key)}
+                  >
+                    <Text style={[modeStyles.label, ttsMode === opt.key && modeStyles.labelActive]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </Section>
+
           <Section label="TELEGRAM">
             <Field
               label="MOBILE BOT TOKEN"
@@ -76,17 +144,6 @@ export default function SettingsScreen() {
               value={chatId}
               onChangeText={setChatId}
               placeholder="-100123456789"
-            />
-          </Section>
-
-          <Section label="NETWORK">
-            <Field
-              label="JARVIS IP"
-              hint="desktop Jarvis OS address"
-              value={jarvisIp}
-              onChangeText={setJarvisIp}
-              placeholder="192.168.1.100"
-              keyboardType="url"
             />
           </Section>
 
@@ -161,6 +218,15 @@ function Field({
     </View>
   );
 }
+
+const modeStyles = StyleSheet.create({
+  hint:        { fontSize: 8, color: COLORS.textFaint, fontFamily: "monospace", marginBottom: 10, letterSpacing: 0.5 },
+  row:         { flexDirection: "row", gap: 8 },
+  btn:         { flex: 1, paddingVertical: 10, borderWidth: 1, borderColor: COLORS.border, borderRadius: 2, alignItems: "center" },
+  btnActive:   { borderColor: COLORS.accent, backgroundColor: COLORS.accentDim },
+  label:       { fontSize: 8, letterSpacing: 3, color: COLORS.textFaint, fontFamily: "monospace" },
+  labelActive: { color: COLORS.accent },
+});
 
 const sectionStyles = StyleSheet.create({
   wrap:  { marginBottom: 24 },

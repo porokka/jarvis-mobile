@@ -2,6 +2,7 @@
   "expo": {
     "name": "Jarvis",
     "slug": "jarvis-mobile",
+    "scheme": "com.porokka.jarvismobile",
     "icon": "./assets/icon.png",
     "splash": {
       "image": "./assets/splash-icon.png",

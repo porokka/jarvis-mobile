@@ -1,18 +1,35 @@
 import { useRef, useCallback } from "react";
 import { Audio } from "expo-av";
+import { PermissionsAndroid, Platform } from "react-native";
+import AudioRecord from "react-native-audio-record";
 import * as FileSystem from "expo-file-system";
 import { useJarvisStore } from "../utils/store";
 
+// 16 kHz mono PCM16 — matches Gemma 4 audio encoder requirements
+const AUDIO_RECORD_OPTIONS = {
+  sampleRate: 16000,
+  channels: 1,
+  bitsPerSample: 16,
+  audioSource: 6,      // MIC
+  wavFile: "jarvis_input.wav",
+};
+
 export function useAudio() {
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingActiveRef = useRef(false);
   const soundRef = useRef<Audio.Sound | null>(null);
   const { muted } = useJarvisStore();
 
   // ── Request permissions ──────────────────────────────────────────────────
   const requestPermissions = useCallback(async () => {
-    const { status } = await Audio.requestPermissionsAsync();
-    if (status !== "granted") throw new Error("Mic permission denied");
-
+    if (Platform.OS === "android") {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+      );
+      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+        throw new Error("Mic permission denied");
+      }
+    }
+    // Keep expo-av audio mode for playback
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
       playsInSilentModeIOS: true,
@@ -20,36 +37,28 @@ export function useAudio() {
     });
   }, []);
 
-  // ── Start recording ──────────────────────────────────────────────────────
+  // ── Start recording (16 kHz mono WAV via AudioRecord) ───────────────────
   const startRecording = useCallback(async () => {
     await requestPermissions();
-
-    const { recording } = await Audio.Recording.createAsync(
-      Audio.RecordingOptionsPresets.HIGH_QUALITY
-    );
-    recordingRef.current = recording;
-    return recording;
+    AudioRecord.init(AUDIO_RECORD_OPTIONS);
+    AudioRecord.start();
+    recordingActiveRef.current = true;
   }, [requestPermissions]);
 
-  // ── Stop recording → base64 WAV ──────────────────────────────────────────
+  // ── Stop recording → base64 WAV (proper PCM16 for Gemma 4) ─────────────
   const stopRecording = useCallback(async (): Promise<string | null> => {
-    const recording = recordingRef.current;
-    if (!recording) return null;
+    if (!recordingActiveRef.current) return null;
+    recordingActiveRef.current = false;
 
-    await recording.stopAndUnloadAsync();
-    recordingRef.current = null;
+    const filePath = await AudioRecord.stop();
+    if (!filePath) return null;
 
-    const uri = recording.getURI();
-    if (!uri) return null;
-
-    // Read as base64
+    // AudioRecord returns an absolute path; read as base64
+    const uri = filePath.startsWith("file://") ? filePath : `file://${filePath}`;
     const base64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
     });
-
-    // Clean up temp file
-    await FileSystem.deleteAsync(uri, { idempotent: true });
-
+    await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
     return base64;
   }, []);
 

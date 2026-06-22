@@ -12,6 +12,7 @@ import { useKeepAwake } from "expo-keep-awake";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { CameraView } from "expo-camera";
 import * as FileSystem from "expo-file-system";
+import * as Speech from "expo-speech";
 
 import { useJarvisStore } from "../utils/store";
 import { useSkills } from "../hooks/useSkills";
@@ -19,7 +20,6 @@ import { useMemory } from "../hooks/useMemory";
 import { useLocalModel } from "../hooks/useLocalModel";
 import { useAudio } from "../hooks/useAudio";
 import { useTelegram } from "../hooks/useTelegram";
-import { useWhisper } from "../hooks/useWhisper";
 import { useCamera } from "../hooks/useCamera";
 import { COLORS, STATE_COLORS } from "../utils/theme";
 import { LatticeFaceRN } from "../components/LatticeFaceRN";
@@ -46,21 +46,18 @@ export default function JarvisScreen() {
   // ── Store ──────────────────────────────────────────────────────────────
   const {
     state, emotion, output, messages,
-    localModelLoaded, localModelProgress,
-    muted, micMuted, cameraMuted,
+    localModelLoaded, localModelProgress, localModelError, localModelLog,
+    muted, micMuted, cameraMuted, routingMode, ttsMode, botToken, chatId,
     setState, setOutput, addMessage, updateLastUserMessage,
-    setMuted, setMicMuted, setCameraMuted,
+    setMuted, setMicMuted, setCameraMuted, setRoutingMode, setTtsMode, setBotToken, setChatId,
   } = useJarvisStore();
 
   // ── Skills + Memory ────────────────────────────────────────────────────
   const { getSkillsPrompt, addSkill } = useSkills();
   const { saveMemory, getMemoryContext } = useMemory();
-  const { route, routeWithVision, isLoaded: modelLoaded } = useLocalModel(getSkillsPrompt, getMemoryContext);
+  const { route, routeWithVision, routeWithAudio, isLoaded: modelLoaded } = useLocalModel(getSkillsPrompt, getMemoryContext);
 
   // ── Local settings ─────────────────────────────────────────────────────
-  const [botToken, setBotToken]   = useState("");
-  const [chatId, setChatId]       = useState("");
-  const [jarvisIp, setJarvisIp]   = useState("192.168.1.100");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
@@ -71,18 +68,24 @@ export default function JarvisScreen() {
           const s = JSON.parse(raw);
           if (s.telegramBotToken) setBotToken(s.telegramBotToken);
           if (s.telegramChatId)   setChatId(s.telegramChatId);
-          if (s.jarvisIp)         setJarvisIp(s.jarvisIp);
+          if (s.routingMode)      setRoutingMode(s.routingMode);
+          if (s.ttsMode)          setTtsMode(s.ttsMode);
         }
       } catch {}
       setSettingsLoaded(true);
     })();
   }, []);
 
+  useEffect(() => {
+    console.log(`[TG] config — token:${botToken ? botToken.slice(0,8)+"…" : "MISSING"} chatId:${chatId || "MISSING"} mode:${routingMode}`);
+  }, [botToken, chatId, routingMode]);
+
   // ── UI state ───────────────────────────────────────────────────────────
   const [textInput, setTextInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [amplitude, setAmplitude] = useState(0);
   const [showChat, setShowChat]   = useState(false);
+  const [showLog, setShowLog]     = useState(false);
   const ampIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -101,7 +104,6 @@ export default function JarvisScreen() {
 
   // ── Hooks ──────────────────────────────────────────────────────────────
   const { startRecording, stopRecording, playAudioBase64, stopPlayback } = useAudio();
-  const { transcribe } = useWhisper({ jarvisIp, jarvisPort: 7900 });
   const { cameraRef, permission, requestPermission, setIsReady, captureFrame } = useCamera();
 
   // Request camera permission when camera is unmuted
@@ -111,37 +113,33 @@ export default function JarvisScreen() {
     }
   }, [cameraMuted, permission]);
 
-  // ── Kokoro TTS ─────────────────────────────────────────────────────────
-  const speakWithKokoro = useCallback(async (text: string) => {
+  // ── Warm up Android TTS engine at mount so first reply is instant ─────────
+  useEffect(() => {
+    Speech.speak(" ", { volume: 0, onDone: () => {}, onError: () => {} });
+  }, []);
+
+  // ── TTS — local (Android native) or remote (Kokoro via Jarvis) ────────────
+  // Brain mode always uses local TTS regardless of ttsMode (no network).
+  const speakWithKokoro = useCallback((text: string) => {
     if (muted) return;
-    try {
-      const res = await fetch(`http://${jarvisIp}:5100/tts/speak`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice: "af_heart", speed: 1.0 }),
-      });
-      if (!res.ok) throw new Error("Kokoro error");
-      const arrayBuf = await res.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuf);
-      let bin = "";
-      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-      const base64 = btoa(bin);
-      setState("speaking");
-      await playAudioBase64(base64, "audio/wav", () => setState("standby"));
-    } catch (e) {
-      console.warn("[TTS] Kokoro failed, expo-speech fallback", e);
-      try {
-        const Speech = await import("expo-speech");
+    if (ttsMode === "kokoro" && routingMode !== "brain") {
+      // Request Kokoro WAV — audio returns via onVoice callback and plays there
+      setState("thinking");
+      requestTts(text).catch(() => {
+        // Kokoro unavailable — fall back to local
+        Speech.stop();
         setState("speaking");
-        Speech.speak(text, {
-          onDone: () => setState("standby"),
-          onError: () => setState("standby"),
-        });
-      } catch {
-        setState("standby");
-      }
+        Speech.speak(text, { onDone: () => setState("standby"), onError: () => setState("standby") });
+      });
+      return;
     }
-  }, [jarvisIp, muted, playAudioBase64]);
+    Speech.stop();
+    setState("speaking");
+    Speech.speak(text, {
+      onDone:  () => setState("standby"),
+      onError: () => setState("standby"),
+    });
+  }, [muted, ttsMode, routingMode, requestTts]);
 
   // ── Telegram callbacks ──────────────────────────────────────────────────
   const onTelegramText = useCallback(async (text: string) => {
@@ -159,16 +157,34 @@ export default function JarvisScreen() {
         if (localReply && localReply.length < text.length) speakText = localReply;
       } catch {}
     }
-    await speakWithKokoro(speakText);
+    speakWithKokoro(speakText);
   }, [modelLoaded, route, speakWithKokoro]);
 
   const onTelegramVoice = useCallback(async (_fileId: string) => {}, []);
 
-  const { sendText } = useTelegram(
+  const { sendText, sendQuery, sendVoice, downloadVoice, requestTts } = useTelegram(
     { botToken, chatId },
     {
       onText:  onTelegramText,
-      onVoice: onTelegramVoice,
+      onVoice: async (fileId: string) => {
+        // Main Jarvis sent TTS audio back — download and play it
+        try {
+          const base64 = await downloadVoice(fileId);
+          if (base64) {
+            setState("speaking");
+            await playAudioBase64(base64, "audio/ogg", () => setState("standby"));
+          }
+        } catch (e) {
+          console.warn("[TG] voice playback failed", e);
+          setState("standby");
+        }
+      },
+      onTranscript: async (transcript: string) => {
+        // Jarvis transcribed our voice — now route the text through local model
+        console.log("[VOICE] transcript received:", transcript);
+        addMessage({ id: Date.now().toString(), role: "user", text: transcript, timestamp: Date.now() });
+        await handleTranscribed(transcript, null);
+      },
       onSkill: (skill) => {
         addSkill(skill.name, skill.description, skill.prompt, "telegram");
         sendText(`✅ Skill loaded: *${skill.name}*`);
@@ -248,29 +264,48 @@ export default function JarvisScreen() {
     updateLastUserMessage(text);
     setState("thinking");
 
+    // BRAIN: local model only, never Telegram
+    if (routingMode === "brain") {
+      if (modelLoaded) {
+        const ctx = messages.slice(-6).map(m => `${m.role}: ${m.text}`).join("\n");
+        const { decision, localReply } = await routeWithVision(text, imageUri, ctx);
+        const reply = (decision === "local" && localReply) ? localReply : "I need to connect to main Jarvis for that — switch to Hybrid or Remote mode.";
+        const displayReply = handleSkillAction(reply);
+        setOutput(displayReply);
+        addMessage({ id: Date.now().toString(), role: "jarvis", text: displayReply, timestamp: Date.now(), source: "local" });
+        if (imageUri) FileSystem.deleteAsync(imageUri, { idempotent: true }).catch(() => {});
+        speakWithKokoro(displayReply);
+      } else {
+        setOutput("Local model not loaded yet.");
+        setState("standby");
+      }
+      return;
+    }
+
+    // REMOTE: skip local model, always Telegram
+    if (routingMode === "remote") {
+      await sendQuery(text, "text", "offline");
+      if (imageUri) FileSystem.deleteAsync(imageUri, { idempotent: true }).catch(() => {});
+      return;
+    }
+
+    // HYBRID (default): try local first, Telegram as fallback
     if (modelLoaded) {
       const ctx = messages.slice(-6).map(m => `${m.role}: ${m.text}`).join("\n");
       const { decision, localReply } = await routeWithVision(text, imageUri, ctx);
-
       if (decision === "local" && localReply) {
         const displayReply = handleSkillAction(localReply);
         setOutput(displayReply);
-        addMessage({
-          id: Date.now().toString(), role: "jarvis",
-          text: displayReply, timestamp: Date.now(), source: "local",
-        });
-        setState("speaking");
-        setTimeout(() => setState("standby"), 1200);
-
-        // Clean up captured frame after use
+        addMessage({ id: Date.now().toString(), role: "jarvis", text: displayReply, timestamp: Date.now(), source: "local" });
         if (imageUri) FileSystem.deleteAsync(imageUri, { idempotent: true }).catch(() => {});
+        speakWithKokoro(displayReply);
         return;
       }
     }
 
-    await sendText(`🎙 ${text}`);
+    await sendQuery(text, "text", modelLoaded ? "routed" : "offline");
     if (imageUri) FileSystem.deleteAsync(imageUri, { idempotent: true }).catch(() => {});
-  }, [modelLoaded, messages, routeWithVision, sendText]);
+  }, [routingMode, modelLoaded, messages, routeWithVision, sendQuery, speakWithKokoro, handleSkillAction]);
 
   // ── Hold to talk ────────────────────────────────────────────────────────
   const handlePressIn = useCallback(async () => {
@@ -296,13 +331,55 @@ export default function JarvisScreen() {
     if (!wavBase64) { setState("standby"); return; }
 
     setState("thinking");
-
-    // Capture camera frame for vision context (if camera is on)
     const imageUri = cameraMuted ? null : await captureFrame();
+    const ctx = messages.slice(-6).map(m => `${m.role}: ${m.text}`).join("\n");
 
-    const text = await transcribe(wavBase64);
-    await handleTranscribed(text, imageUri);
-  }, [isRecording, cameraMuted, captureFrame, transcribe, handleTranscribed]);
+    if (routingMode === "brain") {
+      // Brain mode: local audio only, no Telegram
+      if (modelLoaded) {
+        const { decision, localReply } = await routeWithAudio(wavBase64, ctx);
+        const reply = (decision === "local" && localReply) ? localReply : "I need main Jarvis for that — switch to Hybrid or Remote mode.";
+        const displayReply = handleSkillAction(reply);
+        setOutput(displayReply);
+        addMessage({ id: Date.now().toString(), role: "jarvis", text: displayReply, timestamp: Date.now(), source: "local" });
+        speakWithKokoro(displayReply);
+      } else {
+        setOutput("Local model not loaded.");
+        setState("standby");
+      }
+      if (imageUri) FileSystem.deleteAsync(imageUri, { idempotent: true }).catch(() => {});
+      return;
+    }
+
+    if (routingMode === "remote") {
+      // Remote mode: always full Telegram handling
+      await sendVoice(wavBase64, false);
+      if (imageUri) FileSystem.deleteAsync(imageUri, { idempotent: true }).catch(() => {});
+      return;
+    }
+
+    // Hybrid: try local audio, Telegram fallback
+    if (modelLoaded) {
+      const { decision, localReply } = await routeWithAudio(wavBase64, ctx);
+      if (decision === "local" && localReply) {
+        const displayReply = handleSkillAction(localReply);
+        setOutput(displayReply);
+        addMessage({ id: Date.now().toString(), role: "jarvis", text: displayReply, timestamp: Date.now(), source: "local" });
+        if (imageUri) FileSystem.deleteAsync(imageUri, { idempotent: true }).catch(() => {});
+        speakWithKokoro(displayReply);
+        return;
+      }
+      if (decision === "remote") {
+        await sendVoice(wavBase64, true);
+        if (imageUri) FileSystem.deleteAsync(imageUri, { idempotent: true }).catch(() => {});
+        return;
+      }
+    }
+
+    // Offline or no audio support: full Telegram handling
+    await sendVoice(wavBase64, false);
+    if (imageUri) FileSystem.deleteAsync(imageUri, { idempotent: true }).catch(() => {});
+  }, [isRecording, cameraMuted, captureFrame, sendVoice, routingMode, modelLoaded, routeWithAudio, messages, handleSkillAction, speakWithKokoro]);
 
   // ── Text send ───────────────────────────────────────────────────────────
   const handleSendText = useCallback(async () => {
@@ -319,13 +396,7 @@ export default function JarvisScreen() {
   const telegramReady = !!botToken && !!chatId;
   const camGranted    = permission?.granted ?? false;
   const camActive     = !cameraMuted && camGranted;
-  const displayOutput = !localModelLoaded
-    ? (localModelProgress === 0
-        ? "Initializing local model..."
-        : localModelProgress >= 100
-        ? "Loading model into memory, please wait..."
-        : `Downloading Gemma4 model — ${localModelProgress}% complete...`)
-    : output;
+  const displayOutput = output;
 
   return (
     <SafeAreaView style={styles.root}>
@@ -340,9 +411,21 @@ export default function JarvisScreen() {
             </Text>
           </View>
           <View style={styles.headerRight}>
-            <TouchableOpacity onPress={() => router.push("/settings")} style={styles.gearBtn}>
-              <Text style={styles.gearIcon}>⚙</Text>
-            </TouchableOpacity>
+            {/* Buttons row */}
+            <View style={styles.btnRow}>
+              <TouchableOpacity onPress={() => router.push("/logs")} style={styles.gearBtn}>
+                <Text style={styles.gearIcon}>▤</Text>
+                <Text style={styles.gearLabel}>LOG</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => router.push("/ram")} style={styles.gearBtn}>
+                <Text style={styles.gearIcon}>◈</Text>
+                <Text style={styles.gearLabel}>MEM</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => router.push("/settings")} style={styles.gearBtn}>
+                <Text style={styles.gearIcon}>⚙</Text>
+                <Text style={styles.gearLabel}>SET</Text>
+              </TouchableOpacity>
+            </View>
             <View style={styles.statusRow}>
               <View style={[styles.dot, { backgroundColor: telegramReady ? COLORS.green : COLORS.red }]} />
               <Text style={[styles.statusText, { color: telegramReady ? COLORS.green : COLORS.red }]}>
@@ -404,20 +487,29 @@ export default function JarvisScreen() {
           {/* Waveform */}
           <WaveformBars state={state} amplitude={amplitude} />
 
-          {/* Model loading */}
+          {/* Model loading / error */}
           {!localModelLoaded && (
             <View style={styles.progressWrap}>
-              <Text style={styles.progressLabel}>
-                {localModelProgress === 0
-                  ? "INITIALIZING MODEL..."
-                  : localModelProgress >= 100
-                  ? "LOADING INTO MEMORY..."
-                  : `DOWNLOADING GEMMA4  ${localModelProgress}%`}
-              </Text>
+              <Text style={styles.loadingTitle}>J.A.R.V.I.S</Text>
+              <Text style={styles.loadingBy}>by Sami Porokka</Text>
+              {localModelError ? (
+                <Text style={[styles.progressLabel, { color: "#f04040", fontSize: 9, marginTop: 8 }]} numberOfLines={3}>
+                  {"ERR: " + localModelError}
+                </Text>
+              ) : (
+                <Text style={[styles.progressLabel, { marginTop: 8 }]}>
+                  {localModelProgress === 0
+                    ? "INITIALIZING MODEL..."
+                    : localModelProgress >= 100
+                    ? "LOADING INTO MEMORY..."
+                    : `DOWNLOADING GEMMA4  ${localModelProgress}%`}
+                </Text>
+              )}
               <View style={styles.progressBg}>
                 <View style={[styles.progressFill, {
-                  width: localModelProgress === 0 ? "4%" : `${localModelProgress}%`,
-                  opacity: localModelProgress === 0 ? 0.5 : 1,
+                  width: localModelError ? "100%" : localModelProgress === 0 ? "4%" : `${localModelProgress}%`,
+                  opacity: localModelError ? 0.4 : localModelProgress === 0 ? 0.5 : 1,
+                  backgroundColor: localModelError ? "#f04040" : undefined,
                 }]} />
               </View>
             </View>
@@ -435,17 +527,28 @@ export default function JarvisScreen() {
           </View>
         </View>
 
-        {/* Output */}
-        <View style={styles.outputWrap}>
-          {timerLeft !== null && (
-            <Text style={styles.timerText}>
-              ⏱ {Math.floor(timerLeft / 60)}:{String(timerLeft % 60).padStart(2, "0")}
-            </Text>
-          )}
-          <Text style={[styles.outputText, !localModelLoaded && styles.outputLoading]} numberOfLines={3}>
-            {displayOutput}
-          </Text>
-        </View>
+        {/* Output — always visible when there's content; hidden during silent download */}
+        {(!!displayOutput || timerLeft !== null || !!localModelLog) && (
+          <View style={styles.outputWrap}>
+            {timerLeft !== null && (
+              <Text style={styles.timerText}>
+                ⏱ {Math.floor(timerLeft / 60)}:{String(timerLeft % 60).padStart(2, "0")}
+              </Text>
+            )}
+            <View style={styles.outputRow}>
+              <Text style={styles.outputText} numberOfLines={showLog ? 1 : 3}>
+                {showLog ? localModelLog || "— no log yet —" : displayOutput}
+              </Text>
+              {!!localModelLog && (
+                <TouchableOpacity onPress={() => setShowLog(v => !v)} style={styles.logTab}>
+                  <Text style={[styles.logTabLabel, showLog && styles.logTabActive]}>
+                    {showLog ? "OUT" : "LOG"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        )}
 
         <View style={styles.divider} />
 
@@ -577,8 +680,10 @@ const styles = StyleSheet.create({
   logo:         { fontSize: 13, letterSpacing: 6, color: COLORS.accent, fontFamily: "monospace", textShadowColor: COLORS.accentGlow, textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 8 },
   logoSub:      { fontSize: 7, letterSpacing: 2, color: COLORS.textFaint, marginTop: 2, fontFamily: "monospace" },
   headerRight:  { alignItems: "flex-end", gap: 5 },
-  gearBtn:      { padding: 2, marginBottom: 2 },
+  btnRow:       { flexDirection: "row", gap: 12, marginBottom: 4 },
+  gearBtn:      { alignItems: "center", gap: 2 },
   gearIcon:     { fontSize: 16, color: COLORS.textFaint },
+  gearLabel:    { fontSize: 5, letterSpacing: 1, color: COLORS.textFaint, fontFamily: "monospace" },
   statusRow:    { flexDirection: "row", alignItems: "center", gap: 5 },
   dot:          { width: 5, height: 5, borderRadius: 3 },
   statusText:   { fontSize: 8, letterSpacing: 2, fontFamily: "monospace" },
@@ -599,18 +704,24 @@ const styles = StyleSheet.create({
   camMuteLabel: { fontSize: 6, letterSpacing: 2, fontFamily: "monospace" },
 
   // Progress
-  progressWrap: { marginTop: 6, alignItems: "center", width: "80%" },
-  progressLabel:{ fontSize: 7, letterSpacing: 3, color: COLORS.accent, marginBottom: 3, fontFamily: "monospace" },
-  progressBg:   { width: "100%", height: 2, backgroundColor: COLORS.border, borderRadius: 1 },
-  progressFill: { height: 2, backgroundColor: COLORS.accent, borderRadius: 1 },
+  progressWrap:  { marginTop: 6, alignItems: "center", width: "80%" },
+  loadingTitle:  { fontSize: 22, letterSpacing: 10, color: COLORS.accent, fontFamily: "monospace", textShadowColor: COLORS.accentGlow, textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 12 },
+  loadingBy:     { fontSize: 8, letterSpacing: 3, color: COLORS.textFaint, fontFamily: "monospace", marginTop: 2 },
+  progressLabel: { fontSize: 7, letterSpacing: 3, color: COLORS.accent, marginBottom: 3, fontFamily: "monospace" },
+  progressBg:    { width: "100%", height: 2, backgroundColor: COLORS.border, borderRadius: 1 },
+  progressFill:  { height: 2, backgroundColor: COLORS.accent, borderRadius: 1 },
   pipelineRow:  { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 10 },
   arrow:        { fontSize: 8, color: COLORS.textFaint },
 
   // Output
   outputWrap:    { paddingHorizontal: 20, paddingVertical: 10, minHeight: 52, justifyContent: "center" },
-  outputText:    { fontSize: 12, color: "rgba(255,255,255,0.75)", textAlign: "center", fontFamily: "monospace", lineHeight: 18 },
+  outputRow:     { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  outputText:    { flex: 1, fontSize: 12, color: "rgba(255,255,255,0.75)", textAlign: "center", fontFamily: "monospace", lineHeight: 18 },
   outputLoading: { color: COLORS.accent, opacity: 0.6, fontSize: 11 },
   timerText:     { fontSize: 22, color: COLORS.accent, textAlign: "center", fontFamily: "monospace", letterSpacing: 4, marginBottom: 4 },
+  logTab:        { paddingHorizontal: 5, paddingVertical: 2, borderWidth: 1, borderColor: COLORS.border, borderRadius: 2 },
+  logTabLabel:   { fontSize: 6, letterSpacing: 2, color: COLORS.textFaint, fontFamily: "monospace" },
+  logTabActive:  { color: COLORS.accent },
 
   // Voice row
   voiceRow:     { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 12, gap: 8 },

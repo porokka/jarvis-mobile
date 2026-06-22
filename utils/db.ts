@@ -158,6 +158,13 @@ export async function getDb(): Promise<SQLite.SQLiteDatabase> {
       updated_at  INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS kill_list (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      package_name TEXT    NOT NULL UNIQUE,
+      app_name     TEXT    NOT NULL,
+      added_at     INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_memories_type    ON memories(type);
     CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
   `);
@@ -175,4 +182,31 @@ async function seedBuiltinSkills(db: SQLite.SQLiteDatabase) {
       [skill.name, skill.description, skill.prompt, skill.source, 1, now]
     );
   }
+}
+
+// ── Kill list ─────────────────────────────────────────────────────────────────
+
+export interface KillEntry {
+  id: number;
+  package_name: string;
+  app_name: string;
+  added_at: number;
+}
+
+export async function getKillList(): Promise<KillEntry[]> {
+  const db = await getDb();
+  return db.getAllAsync<KillEntry>("SELECT * FROM kill_list ORDER BY app_name ASC");
+}
+
+export async function addToKillList(packageName: string, appName: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    "INSERT OR IGNORE INTO kill_list (package_name, app_name, added_at) VALUES (?, ?, ?)",
+    [packageName, appName, Date.now()]
+  );
+}
+
+export async function removeFromKillList(packageName: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync("DELETE FROM kill_list WHERE package_name = ?", [packageName]);
 }
